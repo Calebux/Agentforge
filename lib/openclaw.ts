@@ -52,7 +52,18 @@ export async function getGatewayHealth() {
     return { status: 'ok', version: 'mock', uptime: 9999 }
   }
   const { stdout } = await execAsync(`${OPENCLAW_BIN} health`)
-  return JSON.parse(stdout)
+  // OpenClaw returns plain text, not JSON — parse it into a structured object
+  try {
+    return JSON.parse(stdout)
+  } catch {
+    const lines = stdout.trim().split('\n')
+    const result: Record<string, string> = { status: 'ok', raw: stdout }
+    for (const line of lines) {
+      const [key, ...rest] = line.split(':')
+      if (key && rest.length) result[key.trim().toLowerCase()] = rest.join(':').trim()
+    }
+    return result
+  }
 }
 
 export function writeAgentConfig(
