@@ -32,6 +32,7 @@ export type DeployAgentRequest = {
   name: string
   llm_provider: LLMProvider
   llm_model: string
+  llm_api_key: string
   system_prompt: string
   spending_limit_monthly: number
   spending_limit_per_tx: number

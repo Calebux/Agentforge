@@ -62,6 +62,7 @@ export function Step4Deploy({ template, config, limits, onBack }: Step4Props) {
           name: config.name,
           llm_provider: config.llm_provider,
           llm_model: config.llm_model,
+          llm_api_key: config.api_key,
           system_prompt: config.system_prompt,
           spending_limit_monthly: limits.spending_limit_monthly,
           spending_limit_per_tx: limits.spending_limit_per_tx,

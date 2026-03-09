@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { createAgent, updateAgent, addEvent } from '@/lib/db'
-import { writeAgentConfig, startAgent } from '@/lib/openclaw'
+import { startAgent } from '@/lib/openclaw'
 import type { DeployAgentRequest } from '@/types/agent'
 
 export async function POST(request: NextRequest) {
@@ -18,6 +18,7 @@ export async function POST(request: NextRequest) {
     name,
     llm_provider,
     llm_model,
+    llm_api_key,
     system_prompt,
     spending_limit_monthly,
     spending_limit_per_tx,
@@ -43,20 +44,15 @@ export async function POST(request: NextRequest) {
       spending_limit_per_tx: spending_limit_per_tx ?? null,
     })
 
-    // 2. Write OpenClaw config
-    const configPath = writeAgentConfig(agentId, {
+    // 2. Register agent in OpenClaw (writes clawdbot.json + auth-profiles.json)
+    await startAgent(agentId, {
       name,
       llm_provider,
       llm_model,
-      system_prompt,
-      spending_limit_monthly: spending_limit_monthly ?? null,
-      spending_limit_per_tx: spending_limit_per_tx ?? null,
+      llm_api_key: llm_api_key ?? '',
     })
 
-    // 3. Start the agent
-    await startAgent(agentId, configPath)
-
-    // 4. Mark as running
+    // 3. Mark as running
     updateAgent(agentId, { status: 'running' })
     addEvent({ agent_id: agentId, event_type: 'start', payload: JSON.stringify({ name }) })
 
@@ -67,12 +63,15 @@ export async function POST(request: NextRequest) {
       dashboardUrl: `${appUrl}/agent/${agentId}`,
     })
   } catch (error) {
-    updateAgent(agentId, { status: 'error' })
-    addEvent({
-      agent_id: agentId,
-      event_type: 'error',
-      payload: JSON.stringify({ message: String(error) }),
-    })
+    console.error('[deploy] FAILED:', error)
+    try { updateAgent(agentId, { status: 'error' }) } catch {}
+    try {
+      addEvent({
+        agent_id: agentId,
+        event_type: 'error',
+        payload: JSON.stringify({ message: String(error) }),
+      })
+    } catch {}
     return NextResponse.json(
       { error: 'Deployment failed', details: String(error) },
       { status: 500 }

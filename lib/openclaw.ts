@@ -7,20 +7,85 @@ const execAsync = promisify(exec)
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN ?? 'openclaw'
 const MOCK_MODE = process.env.NEXT_PUBLIC_MOCK_OPENCLAW === 'true'
 
-const STATE_DIR = (process.env.OPENCLAW_STATE_DIR ?? '~/.openclaw').replace(
+// OpenClaw state dir is ~/.clawdbot (not ~/.openclaw)
+const STATE_DIR = (process.env.OPENCLAW_STATE_DIR ?? '~/.clawdbot').replace(
   '~',
   process.env.HOME ?? ''
 )
 
-export async function startAgent(agentId: string, configPath: string) {
+const CLAWD_CONFIG = path.join(STATE_DIR, 'clawdbot.json')
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function readClawdConfig(): any {
+  return JSON.parse(fs.readFileSync(CLAWD_CONFIG, 'utf-8'))
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function writeClawdConfig(config: any) {
+  // Write atomically: backup then overwrite
+  fs.copyFileSync(CLAWD_CONFIG, `${CLAWD_CONFIG}.agentforge.bak`)
+  fs.writeFileSync(CLAWD_CONFIG, JSON.stringify(config, null, 2))
+}
+
+export async function startAgent(
+  agentId: string,
+  config: {
+    name: string
+    llm_provider: string
+    llm_model: string
+    llm_api_key: string
+  }
+) {
   if (MOCK_MODE) {
     await new Promise((resolve) => setTimeout(resolve, 2000))
     return { stdout: `Agent ${agentId} started (mock)`, stderr: '' }
   }
-  const { stdout, stderr } = await execAsync(
-    `${OPENCLAW_BIN} agent --agent ${agentId} --config ${configPath}`
+
+  // 1. Create agent directory
+  const agentDir = path.join(STATE_DIR, 'agents', agentId, 'agent')
+  fs.mkdirSync(agentDir, { recursive: true })
+
+  // 2. Write auth-profiles.json with the user's LLM API key
+  // OpenClaw provider names: 'openai', 'anthropic', 'google'
+  const provider = config.llm_provider.toLowerCase()
+  const authProfiles = {
+    version: 1,
+    profiles: {
+      [`${provider}:default`]: {
+        type: 'api_key',
+        provider,
+        key: config.llm_api_key,
+      },
+    },
+    lastGood: {},
+    usageStats: {},
+  }
+  fs.writeFileSync(
+    path.join(agentDir, 'auth-profiles.json'),
+    JSON.stringify(authProfiles, null, 2)
   )
-  return { stdout, stderr }
+
+  // 3. Add agent to clawdbot.json agents.list
+  const clawdConfig = readClawdConfig()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const agents: any[] = clawdConfig.agents?.list ?? []
+
+  if (!agents.find((a) => a.id === agentId)) {
+    const defaultWorkspace =
+      clawdConfig.agents?.defaults?.workspace ?? process.env.HOME ?? '/tmp'
+    agents.push({
+      id: agentId,
+      name: config.name,
+      workspace: path.join(defaultWorkspace, agentId),
+      agentDir,
+      model: config.llm_model,
+    })
+    clawdConfig.agents = clawdConfig.agents ?? {}
+    clawdConfig.agents.list = agents
+    writeClawdConfig(clawdConfig)
+  }
+
+  return { stdout: `Agent ${agentId} registered in OpenClaw`, stderr: '' }
 }
 
 export async function stopAgent(agentId: string) {
@@ -28,7 +93,28 @@ export async function stopAgent(agentId: string) {
     await new Promise((resolve) => setTimeout(resolve, 500))
     return
   }
-  await execAsync(`${OPENCLAW_BIN} agents stop ${agentId}`)
+
+  const clawdConfig = readClawdConfig()
+
+  // Remove from agents list
+  if (clawdConfig.agents?.list) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    clawdConfig.agents.list = clawdConfig.agents.list.filter(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (a: any) => a.id !== agentId
+    )
+  }
+
+  // Remove any bindings for this agent
+  if (clawdConfig.bindings) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    clawdConfig.bindings = clawdConfig.bindings.filter(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (b: any) => b.agentId !== agentId
+    )
+  }
+
+  writeClawdConfig(clawdConfig)
 }
 
 export async function getAgentLogs(agentId: string, lines = 50) {
@@ -41,10 +127,23 @@ export async function getAgentLogs(agentId: string, lines = 50) {
       .reverse()
       .join('\n')
   }
-  const { stdout } = await execAsync(
-    `${OPENCLAW_BIN} logs --agent ${agentId} --lines ${lines}`
-  )
-  return stdout
+
+  // Read from the shared gateway log, filtering for this agent's ID
+  const logPath = path.join(STATE_DIR, 'logs', 'gateway.log')
+  try {
+    const { stdout } = await execAsync(
+      `tail -n ${lines * 10} "${logPath}" 2>/dev/null`
+    )
+    const filtered = stdout
+      .split('\n')
+      .filter((l) => l.includes(agentId))
+      .slice(-lines)
+      .join('\n')
+    // Fall back to last N lines of gateway log if no agent-specific lines
+    return filtered || stdout.split('\n').slice(-lines).join('\n')
+  } catch {
+    return `No logs available for agent ${agentId}`
+  }
 }
 
 export async function getGatewayHealth() {
@@ -64,24 +163,4 @@ export async function getGatewayHealth() {
     }
     return result
   }
-}
-
-export function writeAgentConfig(
-  agentId: string,
-  config: {
-    name: string
-    llm_provider: string
-    llm_model: string
-    system_prompt: string
-    spending_limit_monthly: number | null
-    spending_limit_per_tx: number | null
-  }
-) {
-  const agentsDir = path.join(STATE_DIR, 'agents')
-  if (!fs.existsSync(agentsDir)) {
-    fs.mkdirSync(agentsDir, { recursive: true })
-  }
-  const configPath = path.join(agentsDir, `${agentId}.json`)
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2))
-  return configPath
 }
