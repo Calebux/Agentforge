@@ -1,6 +1,5 @@
 import { createPublicClient, http } from 'viem'
-import { celoAlfajores } from 'viem/chains'
-import { CELO_RPC } from './celo'
+import { CELO_RPC, activeChain } from './celo'
 
 export const ERC8004_ABI = [
   {
@@ -38,7 +37,7 @@ const CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_ERC8004_CONTRACT_ADDRESS ??
   '0x0000000000000000000000000000000000000000') as `0x${string}`
 
 export const publicClient = createPublicClient({
-  chain: celoAlfajores,
+  chain: activeChain,
   transport: http(CELO_RPC),
 })
 
