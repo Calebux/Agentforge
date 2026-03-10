@@ -82,14 +82,22 @@ export async function startAgent(
       model: config.llm_model,
     })
 
-    // 4. Create workspace and write system prompt using OpenClaw's file conventions
+    // 4. Create workspace and write system prompt
     fs.mkdirSync(workspaceDir, { recursive: true })
 
     if (config.system_prompt) {
       const prompt = `# Agent: ${config.name}\n\n${config.system_prompt}\n`
-      // OpenClaw reads SOUL.md and IDENTITY.md for agent personality
       fs.writeFileSync(path.join(workspaceDir, 'SOUL.md'), prompt)
       fs.writeFileSync(path.join(workspaceDir, 'IDENTITY.md'), prompt)
+
+      // Also overwrite the main workspace SOUL.md so OpenClaw picks it up on restart
+      // (OpenClaw loads identity from the default agent workspace regardless of routing)
+      const mainWorkspace = clawdConfig.agents?.defaults?.workspace
+        ?? clawdConfig.agents?.list?.find((a: any) => a.id === 'main')?.workspace
+        ?? path.join(process.env.HOME ?? '/tmp', 'clawd')
+      if (fs.existsSync(mainWorkspace)) {
+        fs.writeFileSync(path.join(mainWorkspace, 'SOUL.md'), prompt)
+      }
     }
 
     clawdConfig.agents = clawdConfig.agents ?? {}
