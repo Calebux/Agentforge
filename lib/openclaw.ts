@@ -82,6 +82,20 @@ export async function startAgent(
     })
     clawdConfig.agents = clawdConfig.agents ?? {}
     clawdConfig.agents.list = agents
+
+    // Bind the new agent to Telegram default, replacing any existing Telegram binding
+    const bindings: any[] = clawdConfig.bindings ?? []
+    const telegramIdx = bindings.findIndex(
+      (b: any) => b.match?.channel === 'telegram' && b.match?.accountId === 'default'
+    )
+    const telegramBinding = { agentId, match: { channel: 'telegram', accountId: 'default' } }
+    if (telegramIdx >= 0) {
+      bindings[telegramIdx] = telegramBinding
+    } else {
+      bindings.push(telegramBinding)
+    }
+    clawdConfig.bindings = bindings
+
     writeClawdConfig(clawdConfig)
   }
 
