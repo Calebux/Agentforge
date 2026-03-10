@@ -34,6 +34,7 @@ export async function startAgent(
     llm_provider: string
     llm_model: string
     llm_api_key: string
+    system_prompt?: string
   }
 ) {
   if (MOCK_MODE) {
@@ -73,13 +74,24 @@ export async function startAgent(
   if (!agents.find((a) => a.id === agentId)) {
     const defaultWorkspace =
       clawdConfig.agents?.defaults?.workspace ?? process.env.HOME ?? '/tmp'
+    const workspaceDir = path.join(defaultWorkspace, agentId)
     agents.push({
       id: agentId,
       name: config.name,
-      workspace: path.join(defaultWorkspace, agentId),
+      workspace: workspaceDir,
       agentDir,
       model: config.llm_model,
     })
+    // 4. Create workspace directory and write system prompt as BOOT.md
+    fs.mkdirSync(workspaceDir, { recursive: true })
+
+    if (config.system_prompt) {
+      fs.writeFileSync(
+        path.join(workspaceDir, 'BOOT.md'),
+        `# Agent: ${config.name}\n\n${config.system_prompt}\n`
+      )
+    }
+
     clawdConfig.agents = clawdConfig.agents ?? {}
     clawdConfig.agents.list = agents
 

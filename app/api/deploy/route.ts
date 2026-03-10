@@ -50,6 +50,7 @@ export async function POST(request: NextRequest) {
       llm_provider,
       llm_model,
       llm_api_key: llm_api_key ?? '',
+      system_prompt,
     })
 
     // 3. Mark as running
