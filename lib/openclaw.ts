@@ -72,9 +72,8 @@ export async function startAgent(
   const agents: any[] = clawdConfig.agents?.list ?? []
 
   if (!agents.find((a) => a.id === agentId)) {
-    const defaultWorkspace =
-      clawdConfig.agents?.defaults?.workspace ?? process.env.HOME ?? '/tmp'
-    const workspaceDir = path.join(defaultWorkspace, agentId)
+    // Use a separate directory outside the main clawd workspace to avoid inheriting its identity
+    const workspaceDir = path.join(process.env.HOME ?? '/tmp', 'agentforge-agents', agentId)
     agents.push({
       id: agentId,
       name: config.name,
@@ -82,14 +81,15 @@ export async function startAgent(
       agentDir,
       model: config.llm_model,
     })
-    // 4. Create workspace directory and write system prompt as BOOT.md
+
+    // 4. Create workspace and write system prompt using OpenClaw's file conventions
     fs.mkdirSync(workspaceDir, { recursive: true })
 
     if (config.system_prompt) {
-      fs.writeFileSync(
-        path.join(workspaceDir, 'BOOT.md'),
-        `# Agent: ${config.name}\n\n${config.system_prompt}\n`
-      )
+      const prompt = `# Agent: ${config.name}\n\n${config.system_prompt}\n`
+      // OpenClaw reads SOUL.md and IDENTITY.md for agent personality
+      fs.writeFileSync(path.join(workspaceDir, 'SOUL.md'), prompt)
+      fs.writeFileSync(path.join(workspaceDir, 'IDENTITY.md'), prompt)
     }
 
     clawdConfig.agents = clawdConfig.agents ?? {}
