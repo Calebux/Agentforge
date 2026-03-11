@@ -22,10 +22,14 @@ export async function GET() {
     const health = await getGatewayHealth()
     return NextResponse.json({ status: 'ok', gateway: health })
   } catch (err) {
+    const sentinel = fs.existsSync('/tmp/start-js-ran.txt')
+      ? fs.readFileSync('/tmp/start-js-ran.txt', 'utf-8')
+      : 'NOT FOUND — start.js did not run'
     return NextResponse.json({
       status: 'ok',
       gateway: 'unavailable',
       gatewayError: String(err),
+      startJsSentinel: sentinel,
       gatewayLogs: readGatewayLogs(),
     })
   }

@@ -89,6 +89,7 @@ function startGateway() {
 }
 
 async function main() {
+  fs.writeFileSync('/tmp/start-js-ran.txt', `pid=${process.pid} time=${new Date().toISOString()} OPENCLAW_BIN=${OPENCLAW_BIN ?? 'NOT SET'} STATE_DIR=${STATE_DIR}`)
   startGateway()
 
   // Give OpenClaw a moment to start before Next.js begins serving
