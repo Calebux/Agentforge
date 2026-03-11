@@ -34,9 +34,18 @@ function bootstrapConfig() {
   config = config.replace('__TELEGRAM_BOT_TOKEN__', telegramToken ?? '')
   config = config.replace('__OPENCLAW_GATEWAY_TOKEN__', gatewayToken)
 
-  fs.mkdirSync(STATE_DIR, { recursive: true })
-  fs.mkdirSync(path.join(STATE_DIR, 'agents', 'main', 'agent'), { recursive: true })
-  fs.mkdirSync('/data/clawd', { recursive: true })
+  // Create all dirs OpenClaw expects to exist
+  for (const dir of [
+    STATE_DIR,
+    path.join(STATE_DIR, 'agents', 'main', 'agent'),
+    path.join(STATE_DIR, 'logs'),
+    path.join(STATE_DIR, 'credentials'),
+    path.join(STATE_DIR, 'memory'),
+    path.join(STATE_DIR, 'canvas'),
+    '/data/clawd',
+  ]) {
+    fs.mkdirSync(dir, { recursive: true })
+  }
   fs.writeFileSync(CLAWD_CONFIG, config)
   console.log('[start] Bootstrapped clawdbot.json from template')
 }
