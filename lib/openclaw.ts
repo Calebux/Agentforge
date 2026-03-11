@@ -7,13 +7,44 @@ const execAsync = promisify(exec)
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN ?? 'openclaw'
 const MOCK_MODE = process.env.NEXT_PUBLIC_MOCK_OPENCLAW === 'true'
 
-// OpenClaw state dir is ~/.clawdbot (not ~/.openclaw)
+// Remote VPS gateway (preferred) — set OPENCLAW_GATEWAY_URL to use
+const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL?.replace(/\/$/, '')
+const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ?? ''
+
+// Local state dir (fallback when running OpenClaw on the same machine)
 const STATE_DIR = (process.env.OPENCLAW_STATE_DIR ?? '~/.clawdbot').replace(
   '~',
   process.env.HOME ?? ''
 )
-
 const CLAWD_CONFIG = path.join(STATE_DIR, 'clawdbot.json')
+
+// ── Remote gateway helpers ──────────────────────────────────────────────────
+
+function gatewayHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    ...(GATEWAY_TOKEN ? { Authorization: `Bearer ${GATEWAY_TOKEN}` } : {}),
+  }
+}
+
+async function gatewayFetch(endpoint: string, init?: RequestInit) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 5000)
+  try {
+    const res = await fetch(`${GATEWAY_URL}${endpoint}`, {
+      ...init,
+      headers: { ...gatewayHeaders(), ...(init?.headers ?? {}) },
+      signal: controller.signal,
+    })
+    clearTimeout(timer)
+    return res
+  } catch (err) {
+    clearTimeout(timer)
+    throw err
+  }
+}
+
+// ── Local config helpers (same-machine mode) ────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function readClawdConfig(): any {
@@ -22,10 +53,11 @@ function readClawdConfig(): any {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function writeClawdConfig(config: any) {
-  // Write atomically: backup then overwrite
   fs.copyFileSync(CLAWD_CONFIG, `${CLAWD_CONFIG}.agentforge.bak`)
   fs.writeFileSync(CLAWD_CONFIG, JSON.stringify(config, null, 2))
 }
+
+// ── Public API ──────────────────────────────────────────────────────────────
 
 export async function startAgent(
   agentId: string,
@@ -42,65 +74,54 @@ export async function startAgent(
     return { stdout: `Agent ${agentId} started (mock)`, stderr: '' }
   }
 
-  // If clawdbot.json doesn't exist, OpenClaw is not installed on this host — skip silently
+  // Remote VPS mode: POST agent config to the VPS webhook
+  if (GATEWAY_URL) {
+    const res = await gatewayFetch('/agentforge/register', {
+      method: 'POST',
+      body: JSON.stringify({ agentId, ...config }),
+    })
+    if (!res.ok) {
+      console.warn('[openclaw] Remote agent register failed:', res.status)
+    }
+    return { stdout: `Agent ${agentId} registered on remote gateway`, stderr: '' }
+  }
+
+  // Local mode: write config files directly
   if (!fs.existsSync(CLAWD_CONFIG)) {
     console.warn('[openclaw] clawdbot.json not found — skipping OpenClaw registration')
     return { stdout: `Agent ${agentId} saved (OpenClaw unavailable)`, stderr: '' }
   }
 
-  // 1. Create agent directory
   const agentDir = path.join(STATE_DIR, 'agents', agentId, 'agent')
   fs.mkdirSync(agentDir, { recursive: true })
 
-  // 2. Write auth-profiles.json with the user's LLM API key
-  // OpenClaw provider names: 'openai', 'anthropic', 'google'
   const provider = config.llm_provider.toLowerCase()
   const authProfiles = {
     version: 1,
     profiles: {
-      [`${provider}:default`]: {
-        type: 'api_key',
-        provider,
-        key: config.llm_api_key,
-      },
+      [`${provider}:default`]: { type: 'api_key', provider, key: config.llm_api_key },
     },
     lastGood: {},
     usageStats: {},
   }
-  fs.writeFileSync(
-    path.join(agentDir, 'auth-profiles.json'),
-    JSON.stringify(authProfiles, null, 2)
-  )
+  fs.writeFileSync(path.join(agentDir, 'auth-profiles.json'), JSON.stringify(authProfiles, null, 2))
 
-  // 3. Add agent to clawdbot.json agents.list
   const clawdConfig = readClawdConfig()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const agents: any[] = clawdConfig.agents?.list ?? []
 
   if (!agents.find((a) => a.id === agentId)) {
-    // Use a separate directory outside the main clawd workspace to avoid inheriting its identity
     const workspaceDir = path.join(process.env.HOME ?? '/tmp', 'agentforge-agents', agentId)
-    agents.push({
-      id: agentId,
-      name: config.name,
-      workspace: workspaceDir,
-      agentDir,
-      model: config.llm_model,
-    })
+    agents.push({ id: agentId, name: config.name, workspace: workspaceDir, agentDir, model: config.llm_model })
 
-    // 4. Create workspace and write system prompt
     fs.mkdirSync(workspaceDir, { recursive: true })
 
     if (config.system_prompt) {
       const prompt = `# Agent: ${config.name}\n\n${config.system_prompt}\n`
       fs.writeFileSync(path.join(workspaceDir, 'SOUL.md'), prompt)
       fs.writeFileSync(path.join(workspaceDir, 'IDENTITY.md'), prompt)
-
-      // Also overwrite the main workspace SOUL.md so OpenClaw picks it up on restart
-      // (OpenClaw loads identity from the default agent workspace regardless of routing)
-      const mainWorkspace = clawdConfig.agents?.defaults?.workspace
-        ?? clawdConfig.agents?.list?.find((a: any) => a.id === 'main')?.workspace
-        ?? path.join(process.env.HOME ?? '/tmp', 'clawd')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mainWorkspace = clawdConfig.agents?.defaults?.workspace ?? clawdConfig.agents?.list?.find((a: any) => a.id === 'main')?.workspace ?? path.join(process.env.HOME ?? '/tmp', 'clawd')
       if (fs.existsSync(mainWorkspace)) {
         fs.writeFileSync(path.join(mainWorkspace, 'SOUL.md'), prompt)
       }
@@ -109,67 +130,42 @@ export async function startAgent(
     clawdConfig.agents = clawdConfig.agents ?? {}
     clawdConfig.agents.list = agents
 
-    // Bind the new agent to Telegram default, replacing any existing Telegram binding
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const bindings: any[] = clawdConfig.bindings ?? []
-    const telegramIdx = bindings.findIndex(
-      (b: any) => b.match?.channel === 'telegram' && b.match?.accountId === 'default'
-    )
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const telegramIdx = bindings.findIndex((b: any) => b.match?.channel === 'telegram' && b.match?.accountId === 'default')
     const telegramBinding = { agentId, match: { channel: 'telegram', accountId: 'default' } }
-    if (telegramIdx >= 0) {
-      bindings[telegramIdx] = telegramBinding
-    } else {
-      bindings.push(telegramBinding)
-    }
+    if (telegramIdx >= 0) bindings[telegramIdx] = telegramBinding
+    else bindings.push(telegramBinding)
     clawdConfig.bindings = bindings
 
     writeClawdConfig(clawdConfig)
-  }
 
-  // After writing config, restart the gateway so it picks up the new agent
-  await ensureGatewayRunning()
+    // Restart gateway so it picks up the new agent
+    await ensureGatewayRunning()
+  }
 
   return { stdout: `Agent ${agentId} registered in OpenClaw`, stderr: '' }
 }
 
-// Restart the OpenClaw gateway so it picks up new agent configs
-export async function ensureGatewayRunning(): Promise<void> {
-  if (MOCK_MODE || !fs.existsSync(CLAWD_CONFIG)) return
-  try {
-    const { stdout, stderr } = await execAsync(`${OPENCLAW_BIN} gateway restart`)
-    console.log('[openclaw] gateway restart:', stdout || stderr)
-  } catch (err) {
-    console.warn('[openclaw] gateway restart failed (continuing):', err)
-  }
-}
-
 export async function stopAgent(agentId: string) {
-  if (MOCK_MODE) {
-    await new Promise((resolve) => setTimeout(resolve, 500))
+  if (MOCK_MODE) { await new Promise((resolve) => setTimeout(resolve, 500)); return }
+
+  if (GATEWAY_URL) {
+    await gatewayFetch('/agentforge/deregister', {
+      method: 'POST',
+      body: JSON.stringify({ agentId }),
+    }).catch((err) => console.warn('[openclaw] deregister failed (non-fatal):', err))
     return
   }
 
   if (!fs.existsSync(CLAWD_CONFIG)) return
 
   const clawdConfig = readClawdConfig()
-
-  // Remove from agents list
-  if (clawdConfig.agents?.list) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    clawdConfig.agents.list = clawdConfig.agents.list.filter(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (a: any) => a.id !== agentId
-    )
-  }
-
-  // Remove any bindings for this agent
-  if (clawdConfig.bindings) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    clawdConfig.bindings = clawdConfig.bindings.filter(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (b: any) => b.agentId !== agentId
-    )
-  }
-
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (clawdConfig.agents?.list) clawdConfig.agents.list = clawdConfig.agents.list.filter((a: any) => a.id !== agentId)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (clawdConfig.bindings) clawdConfig.bindings = clawdConfig.bindings.filter((b: any) => b.agentId !== agentId)
   writeClawdConfig(clawdConfig)
 }
 
@@ -179,48 +175,47 @@ export async function getAgentLogs(agentId: string, lines = 50) {
     return Array.from({ length: 5 }, (_, i) => {
       const ts = new Date(now.getTime() - i * 30000).toISOString()
       return `[${ts}] [INFO] Agent ${agentId}: mock log line ${5 - i}`
-    })
-      .reverse()
-      .join('\n')
+    }).reverse().join('\n')
   }
 
-  // Read from the shared gateway log, filtering for this agent's ID
   const logPath = path.join(STATE_DIR, 'logs', 'gateway.log')
   try {
-    const { stdout } = await execAsync(
-      `tail -n ${lines * 10} "${logPath}" 2>/dev/null`
-    )
-    const filtered = stdout
-      .split('\n')
-      .filter((l) => l.includes(agentId))
-      .slice(-lines)
-      .join('\n')
-    // Fall back to last N lines of gateway log if no agent-specific lines
+    const { stdout } = await execAsync(`tail -n ${lines * 10} "${logPath}" 2>/dev/null`)
+    const filtered = stdout.split('\n').filter((l) => l.includes(agentId)).slice(-lines).join('\n')
     return filtered || stdout.split('\n').slice(-lines).join('\n')
   } catch {
     return `No logs available for agent ${agentId}`
   }
 }
 
-const GATEWAY_PORT = 18789
-
 export async function getGatewayHealth() {
-  if (MOCK_MODE) {
-    return { status: 'ok', version: 'mock', uptime: 9999 }
+  if (MOCK_MODE) return { status: 'ok', version: 'mock', uptime: 9999 }
+
+  // Remote VPS mode: probe the gateway HTTP port
+  if (GATEWAY_URL) {
+    const res = await gatewayFetch('/')
+    return { status: 'online', httpStatus: res.status, url: GATEWAY_URL }
   }
 
-  // Direct HTTP probe — any response (even 401/404) means gateway is up
+  // Local mode: direct HTTP probe on default port
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 3000)
   try {
-    const res = await fetch(`http://localhost:${GATEWAY_PORT}`, {
-      signal: controller.signal,
-    })
+    const res = await fetch('http://localhost:18789', { signal: controller.signal })
     clearTimeout(timer)
-    return { status: 'online', httpStatus: res.status, port: GATEWAY_PORT }
+    return { status: 'online', httpStatus: res.status, port: 18789 }
   } catch (err: unknown) {
     clearTimeout(timer)
-    const msg = err instanceof Error ? err.message : String(err)
-    throw new Error(`Gateway not responding on port ${GATEWAY_PORT}: ${msg}`)
+    throw new Error(`Gateway not responding: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+export async function ensureGatewayRunning(): Promise<void> {
+  if (MOCK_MODE || !fs.existsSync(CLAWD_CONFIG)) return
+  try {
+    await execAsync(`${OPENCLAW_BIN} gateway restart`)
+    console.log('[openclaw] gateway restarted')
+  } catch (err) {
+    console.warn('[openclaw] gateway restart failed (continuing):', err)
   }
 }
