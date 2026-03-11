@@ -3,16 +3,17 @@ import { getGatewayHealth } from '@/lib/openclaw'
 import fs from 'fs'
 import path from 'path'
 
-function readPm2Logs() {
-  const home = process.env.HOME ?? '/root'
-  const dir = path.join(home, '.pm2', 'logs')
+function readGatewayLogs() {
+  const stateDir = (process.env.OPENCLAW_STATE_DIR ?? '~/.clawdbot').replace(
+    '~', process.env.HOME ?? ''
+  )
   const read = (f: string) => {
     if (!fs.existsSync(f)) return 'not found'
     return fs.readFileSync(f, 'utf-8').slice(-3000)
   }
   return {
-    out: read(path.join(dir, 'openclaw-gateway-out.log')),
-    err: read(path.join(dir, 'openclaw-gateway-error.log')),
+    out: read(path.join(stateDir, 'logs', 'gateway.log')),
+    err: read(path.join(stateDir, 'logs', 'gateway-error.log')),
   }
 }
 
@@ -25,7 +26,7 @@ export async function GET() {
       status: 'ok',
       gateway: 'unavailable',
       gatewayError: String(err),
-      pm2Logs: readPm2Logs(),
+      gatewayLogs: readGatewayLogs(),
     })
   }
 }

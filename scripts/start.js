@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-// Railway startup script: launches OpenClaw gateway via pm2, then starts Next.js.
-// Runs AFTER `next build` completes.
+// Railway startup script: launches OpenClaw gateway, then starts Next.js.
 
 const { spawn } = require('child_process')
 const path = require('path')
@@ -14,7 +13,10 @@ const STATE_DIR = (process.env.OPENCLAW_STATE_DIR ?? '~/.clawdbot').replace(
 const CLAWD_CONFIG = path.join(STATE_DIR, 'clawdbot.json')
 
 function bootstrapConfig() {
-  if (fs.existsSync(CLAWD_CONFIG)) return // already initialized
+  if (fs.existsSync(CLAWD_CONFIG)) {
+    console.log('[start] clawdbot.json already exists — skipping bootstrap')
+    return
+  }
 
   const telegramToken = process.env.TELEGRAM_BOT_TOKEN
   const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN
@@ -34,7 +36,6 @@ function bootstrapConfig() {
   config = config.replace('__TELEGRAM_BOT_TOKEN__', telegramToken ?? '')
   config = config.replace('__OPENCLAW_GATEWAY_TOKEN__', gatewayToken)
 
-  // Create all dirs OpenClaw expects to exist
   for (const dir of [
     STATE_DIR,
     path.join(STATE_DIR, 'agents', 'main', 'agent'),
@@ -46,11 +47,12 @@ function bootstrapConfig() {
   ]) {
     fs.mkdirSync(dir, { recursive: true })
   }
+
   fs.writeFileSync(CLAWD_CONFIG, config)
   console.log('[start] Bootstrapped clawdbot.json from template')
 }
 
-async function startGateway() {
+function startGateway() {
   bootstrapConfig()
 
   if (!OPENCLAW_BIN || !fs.existsSync(CLAWD_CONFIG)) {
@@ -58,60 +60,40 @@ async function startGateway() {
     return
   }
 
-  let pm2
-  try {
-    pm2 = require('pm2')
-  } catch {
-    console.warn('[start] pm2 not available — OpenClaw gateway will not be managed')
-    return
+  // Ensure log dir exists
+  const logDir = path.join(STATE_DIR, 'logs')
+  fs.mkdirSync(logDir, { recursive: true })
+
+  const outLog = path.join(logDir, 'gateway.log')
+  const errLog = path.join(logDir, 'gateway-error.log')
+  const outFd = fs.openSync(outLog, 'a')
+  const errFd = fs.openSync(errLog, 'a')
+
+  // Parse "node /path/to/index.js" into [node, [/path/to/index.js, gateway]]
+  let bin = OPENCLAW_BIN
+  let args = ['gateway']
+  if (OPENCLAW_BIN.startsWith('node ')) {
+    bin = process.execPath
+    args = [OPENCLAW_BIN.slice(5).trim(), 'gateway']
   }
 
-  return new Promise((resolve) => {
-    pm2.connect((connectErr) => {
-      if (connectErr) {
-        console.warn('[start] pm2 connect error:', connectErr.message)
-        resolve()
-        return
-      }
-
-      let script = OPENCLAW_BIN
-      const opts = {
-        name: 'openclaw-gateway',
-        args: 'gateway',
-        cwd: STATE_DIR,
-        autorestart: true,
-        restart_delay: 3000,
-        env: { NODE_ENV: 'production', ...process.env },
-      }
-      if (OPENCLAW_BIN.startsWith('node ')) {
-        opts.interpreter = 'node'
-        script = OPENCLAW_BIN.slice(5).trim()
-      }
-      opts.script = script
-
-      pm2.start(opts, (startErr) => {
-        if (startErr) {
-          // Already running? Try restart.
-          pm2.restart('openclaw-gateway', (restartErr) => {
-            if (restartErr) console.warn('[start] pm2 start/restart failed:', restartErr.message)
-            else console.log('[start] openclaw-gateway restarted via pm2')
-            pm2.disconnect()
-            resolve()
-          })
-        } else {
-          console.log('[start] openclaw-gateway started via pm2')
-          pm2.disconnect()
-          resolve()
-        }
-      })
-    })
+  const child = spawn(bin, args, {
+    cwd: STATE_DIR,
+    detached: true,
+    stdio: ['ignore', outFd, errFd],
+    env: { ...process.env },
   })
+
+  child.unref()
+  console.log(`[start] OpenClaw gateway spawned (pid ${child.pid}), logs → ${outLog}`)
 }
 
 async function main() {
-  await startGateway()
+  startGateway()
 
-  // Start Next.js production server
+  // Give OpenClaw a moment to start before Next.js begins serving
+  await new Promise((resolve) => setTimeout(resolve, 2000))
+
   const nextBin = path.join(__dirname, '..', 'node_modules', '.bin', 'next')
   console.log('[start] Starting Next.js...')
   const child = spawn(process.execPath, [nextBin, 'start'], {
