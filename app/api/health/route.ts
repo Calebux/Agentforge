@@ -4,11 +4,9 @@ import { getGatewayHealth } from '@/lib/openclaw'
 export async function GET() {
   try {
     const health = await getGatewayHealth()
-    return NextResponse.json(health)
-  } catch (error) {
-    return NextResponse.json(
-      { status: 'error', message: String(error) },
-      { status: 503 }
-    )
+    return NextResponse.json({ status: 'ok', gateway: health })
+  } catch {
+    // Gateway unavailable is non-fatal — app itself is healthy
+    return NextResponse.json({ status: 'ok', gateway: 'unavailable' })
   }
 }
