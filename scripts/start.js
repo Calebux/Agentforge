@@ -13,7 +13,37 @@ const STATE_DIR = (process.env.OPENCLAW_STATE_DIR ?? '~/.clawdbot').replace(
 )
 const CLAWD_CONFIG = path.join(STATE_DIR, 'clawdbot.json')
 
+function bootstrapConfig() {
+  if (fs.existsSync(CLAWD_CONFIG)) return // already initialized
+
+  const telegramToken = process.env.TELEGRAM_BOT_TOKEN
+  const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN
+    ?? require('crypto').randomBytes(24).toString('hex')
+
+  if (!telegramToken) {
+    console.warn('[start] TELEGRAM_BOT_TOKEN not set — Telegram channel will be disabled')
+  }
+
+  const templatePath = path.join(__dirname, 'clawdbot.template.json')
+  if (!fs.existsSync(templatePath)) {
+    console.warn('[start] clawdbot.template.json not found — skipping config bootstrap')
+    return
+  }
+
+  let config = fs.readFileSync(templatePath, 'utf-8')
+  config = config.replace('__TELEGRAM_BOT_TOKEN__', telegramToken ?? '')
+  config = config.replace('__OPENCLAW_GATEWAY_TOKEN__', gatewayToken)
+
+  fs.mkdirSync(STATE_DIR, { recursive: true })
+  fs.mkdirSync(path.join(STATE_DIR, 'agents', 'main', 'agent'), { recursive: true })
+  fs.mkdirSync('/data/clawd', { recursive: true })
+  fs.writeFileSync(CLAWD_CONFIG, config)
+  console.log('[start] Bootstrapped clawdbot.json from template')
+}
+
 async function startGateway() {
+  bootstrapConfig()
+
   if (!OPENCLAW_BIN || !fs.existsSync(CLAWD_CONFIG)) {
     console.log('[start] Skipping OpenClaw gateway (OPENCLAW_BIN not set or clawdbot.json not found)')
     return
