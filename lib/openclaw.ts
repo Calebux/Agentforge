@@ -206,17 +206,43 @@ export async function getGatewayHealth() {
   if (MOCK_MODE) {
     return { status: 'ok', version: 'mock', uptime: 9999 }
   }
+
+  // Use pm2 to check gateway process status — more reliable than CLI health command
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let pm2: any
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    pm2 = require('pm2')
+  } catch {
+    // pm2 not available, fall back to CLI
+  }
+
+  if (pm2) {
+    return new Promise((resolve, reject) => {
+      pm2.connect((connectErr: Error | null) => {
+        if (connectErr) { reject(connectErr); return }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        pm2.describe('openclaw-gateway', (err: Error | null, procs: any[]) => {
+          pm2.disconnect()
+          if (err || !procs?.length) { reject(new Error('Gateway process not found')); return }
+          const proc = procs[0]
+          const pmEnv = proc.pm2_env ?? {}
+          resolve({
+            status: pmEnv.status ?? 'unknown',
+            uptime: pmEnv.pm_uptime ? Date.now() - pmEnv.pm_uptime : 0,
+            restarts: pmEnv.restart_time ?? 0,
+            pid: proc.pid,
+          })
+        })
+      })
+    })
+  }
+
+  // Fallback: CLI health command
   const { stdout } = await execAsync(`${OPENCLAW_BIN} health`)
-  // OpenClaw returns plain text, not JSON — parse it into a structured object
   try {
     return JSON.parse(stdout)
   } catch {
-    const lines = stdout.trim().split('\n')
-    const result: Record<string, string> = { status: 'ok', raw: stdout }
-    for (const line of lines) {
-      const [key, ...rest] = line.split(':')
-      if (key && rest.length) result[key.trim().toLowerCase()] = rest.join(':').trim()
-    }
-    return result
+    return { status: 'ok', raw: stdout }
   }
 }
