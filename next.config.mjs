@@ -5,7 +5,7 @@ const nextConfig = {
     instrumentationHook: true,
   },
   webpack: (config) => {
-    config.externals.push('better-sqlite3')
+    config.externals.push('better-sqlite3', 'fs', 'path', 'child_process', 'crypto')
     return config
   },
 }
