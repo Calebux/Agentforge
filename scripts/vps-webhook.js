@@ -19,7 +19,7 @@
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
-const { execSync } = require('child_process')
+const { spawn } = require('child_process')
 
 const PORT = parseInt(process.env.WEBHOOK_PORT ?? '3001', 10)
 const TOKEN = process.env.WEBHOOK_TOKEN ?? process.env.OPENCLAW_GATEWAY_TOKEN ?? ''
@@ -43,12 +43,20 @@ function writeJSON(file, data) {
 }
 
 function restartGateway() {
-  try {
-    execSync(`${OPENCLAW_BIN} gateway restart`, { timeout: 10000 })
-    console.log('[webhook] gateway restarted')
-  } catch (err) {
-    console.warn('[webhook] gateway restart failed (non-fatal):', err.message)
+  // Parse "node /path/to/index.js" into bin + args
+  let bin = OPENCLAW_BIN
+  let args = ['gateway', 'restart']
+  if (OPENCLAW_BIN.startsWith('node ')) {
+    bin = process.execPath
+    args = [OPENCLAW_BIN.slice(5).trim(), 'gateway', 'restart']
   }
+  const child = spawn(bin, args, {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, PATH: process.env.PATH },
+  })
+  child.unref()
+  console.log('[webhook] gateway restart triggered (pid', child.pid + ')')
 }
 
 function send(res, status, body) {
