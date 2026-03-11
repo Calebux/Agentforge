@@ -202,24 +202,25 @@ export async function getAgentLogs(agentId: string, lines = 50) {
   }
 }
 
+const GATEWAY_PORT = 18789
+
 export async function getGatewayHealth() {
   if (MOCK_MODE) {
     return { status: 'ok', version: 'mock', uptime: 9999 }
   }
 
-  // Query pm2 via CLI using explicit path to the local binary
-  const pm2Bin = path.join(process.cwd(), 'node_modules', '.bin', 'pm2')
-  const { stdout } = await execAsync(`${pm2Bin} jlist`)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const processes: any[] = JSON.parse(stdout)
-  const gateway = processes.find((p) => p.name === 'openclaw-gateway')
-  if (!gateway) throw new Error('openclaw-gateway not in pm2 list')
-  return {
-    status: gateway.pm2_env?.status ?? 'unknown',
-    uptime: gateway.pm2_env?.pm_uptime
-      ? Math.round((Date.now() - gateway.pm2_env.pm_uptime) / 1000)
-      : 0,
-    restarts: gateway.pm2_env?.restart_time ?? 0,
-    pid: gateway.pid ?? null,
+  // Direct HTTP probe — any response (even 401/404) means gateway is up
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 3000)
+  try {
+    const res = await fetch(`http://localhost:${GATEWAY_PORT}`, {
+      signal: controller.signal,
+    })
+    clearTimeout(timer)
+    return { status: 'online', httpStatus: res.status, port: GATEWAY_PORT }
+  } catch (err: unknown) {
+    clearTimeout(timer)
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new Error(`Gateway not responding on port ${GATEWAY_PORT}: ${msg}`)
   }
 }
