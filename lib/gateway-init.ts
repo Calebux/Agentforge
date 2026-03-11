@@ -1,8 +1,8 @@
 // Gateway bootstrap — called from instrumentation.ts on server startup
-import fs from 'fs'
-import path from 'path'
-import { spawn } from 'child_process'
-import crypto from 'crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import { spawn } from 'node:child_process'
+import crypto from 'node:crypto'
 
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN
 const STATE_DIR = (process.env.OPENCLAW_STATE_DIR ?? '~/.clawdbot').replace(
