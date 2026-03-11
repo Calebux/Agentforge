@@ -129,6 +129,18 @@ async function handleRegister(req, res) {
       const prompt = `# Agent: ${name ?? agentId}\n\n${system_prompt}\n`
       fs.writeFileSync(path.join(workspaceDir, 'SOUL.md'), prompt)
       fs.writeFileSync(path.join(workspaceDir, 'IDENTITY.md'), prompt)
+
+      // Also write to the main/defaults workspace so OpenClaw picks it up
+      const config = readJSON(CLAWD_CONFIG)
+      const mainWorkspace =
+        config.agents?.defaults?.workspace ??
+        config.agents?.list?.find((a) => a.id === 'main')?.workspace ??
+        path.join(process.env.HOME ?? '/tmp', 'clawd')
+      if (fs.existsSync(mainWorkspace)) {
+        fs.writeFileSync(path.join(mainWorkspace, 'SOUL.md'), prompt)
+        fs.writeFileSync(path.join(mainWorkspace, 'IDENTITY.md'), prompt)
+        console.log('[webhook] wrote SOUL.md to main workspace:', mainWorkspace)
+      }
     }
 
     // 3. Update clawdbot.json
