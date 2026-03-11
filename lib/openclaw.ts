@@ -207,42 +207,19 @@ export async function getGatewayHealth() {
     return { status: 'ok', version: 'mock', uptime: 9999 }
   }
 
-  // Use pm2 to check gateway process status — more reliable than CLI health command
+  // Query pm2 via CLI using explicit path to the local binary
+  const pm2Bin = path.join(process.cwd(), 'node_modules', '.bin', 'pm2')
+  const { stdout } = await execAsync(`${pm2Bin} jlist`)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let pm2: any
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    pm2 = require('pm2')
-  } catch {
-    // pm2 not available, fall back to CLI
-  }
-
-  if (pm2) {
-    return new Promise((resolve, reject) => {
-      pm2.connect((connectErr: Error | null) => {
-        if (connectErr) { reject(connectErr); return }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        pm2.describe('openclaw-gateway', (err: Error | null, procs: any[]) => {
-          pm2.disconnect()
-          if (err || !procs?.length) { reject(new Error('Gateway process not found')); return }
-          const proc = procs[0]
-          const pmEnv = proc.pm2_env ?? {}
-          resolve({
-            status: pmEnv.status ?? 'unknown',
-            uptime: pmEnv.pm_uptime ? Date.now() - pmEnv.pm_uptime : 0,
-            restarts: pmEnv.restart_time ?? 0,
-            pid: proc.pid,
-          })
-        })
-      })
-    })
-  }
-
-  // Fallback: CLI health command
-  const { stdout } = await execAsync(`${OPENCLAW_BIN} health`)
-  try {
-    return JSON.parse(stdout)
-  } catch {
-    return { status: 'ok', raw: stdout }
+  const processes: any[] = JSON.parse(stdout)
+  const gateway = processes.find((p) => p.name === 'openclaw-gateway')
+  if (!gateway) throw new Error('openclaw-gateway not in pm2 list')
+  return {
+    status: gateway.pm2_env?.status ?? 'unknown',
+    uptime: gateway.pm2_env?.pm_uptime
+      ? Math.round((Date.now() - gateway.pm2_env.pm_uptime) / 1000)
+      : 0,
+    restarts: gateway.pm2_env?.restart_time ?? 0,
+    pid: gateway.pid ?? null,
   }
 }
