@@ -29,6 +29,7 @@ export async function GET() {
       status: 'ok',
       gateway: 'unavailable',
       gatewayError: String(err),
+      gatewayUrlRaw: JSON.stringify(process.env.OPENCLAW_GATEWAY_URL),
       startJsSentinel: sentinel,
       gatewayLogs: readGatewayLogs(),
     })
