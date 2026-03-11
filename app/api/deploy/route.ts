@@ -45,13 +45,15 @@ export async function POST(request: NextRequest) {
     })
 
     // 2. Register agent in OpenClaw (writes clawdbot.json + auth-profiles.json)
-    await startAgent(agentId, {
+    const ocResult = await startAgent(agentId, {
       name,
       llm_provider,
       llm_model,
       llm_api_key: llm_api_key ?? '',
       system_prompt,
     })
+    console.log('[deploy] startAgent result:', JSON.stringify(ocResult))
+    console.log('[deploy] GATEWAY_URL env:', process.env.OPENCLAW_GATEWAY_URL)
 
     // 3. Mark as running
     updateAgent(agentId, { status: 'running' })
