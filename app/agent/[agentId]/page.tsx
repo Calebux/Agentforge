@@ -3,9 +3,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Bot, Cpu, Calendar, Link2, DollarSign, Square, Play, Trash2, ExternalLink } from 'lucide-react'
+import { ArrowLeft, Bot, Cpu, Calendar, Link2, DollarSign, Square, Play, Trash2, ExternalLink, Zap } from 'lucide-react'
 import { ActivityFeed } from '@/components/dashboard/ActivityFeed'
 import { SpendingChart } from '@/components/dashboard/SpendingChart'
+import { PendingApprovals } from '@/components/dashboard/PendingApprovals'
 import { GlowCard } from '@/components/ui/GlowCard'
 import { FeatureCard } from '@/components/blocks/grid-feature-cards'
 import { Badge } from '@/components/ui/Badge'
@@ -34,6 +35,34 @@ export default function AgentPage() {
       return res.json()
     },
     refetchInterval: 10_000,
+  })
+
+  const simulateMutation = useMutation({
+    mutationFn: async () => {
+      const isYieldOptimizer = agent?.template_id === 'yield-optimizer'
+      const body = isYieldOptimizer
+        ? {
+            action_type: 'bridge',
+            description: 'Rebalance 100 USDC from Celo to Arbitrum — Aave yield: Celo 3.1% → Arbitrum 5.8%',
+            amount: 100,
+            from_chain: 'celo',
+            to_chain: 'arbitrum',
+            from_token: 'USDC',
+            to_token: 'USDC',
+          }
+        : {
+            action_type: 'payment',
+            description: 'Send 25 USDC to 0xRecipient — exceeds approval threshold',
+            amount: 25,
+          }
+      const res = await fetch(`/api/agents/${agentId}/approvals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw new Error('Failed to create approval')
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['approvals', agentId] }),
   })
 
   const patchMutation = useMutation({
@@ -112,6 +141,11 @@ export default function AgentPage() {
               <Play className="h-3.5 w-3.5" /> Restart
             </Button>
           )}
+          <Button variant="secondary" size="sm" loading={simulateMutation.isPending}
+            onClick={() => simulateMutation.mutate()}
+            title="Simulate an agent action requiring approval (demo)">
+            <Zap className="h-3.5 w-3.5" /> Simulate
+          </Button>
           <Button variant="danger" size="sm" loading={deleteMutation.isPending}
             onClick={() => { if (confirm('Delete this agent? This cannot be undone.')) deleteMutation.mutate() }}>
             <Trash2 className="h-3.5 w-3.5" /> Delete
@@ -138,6 +172,12 @@ export default function AgentPage() {
           <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">LLM Configuration</p>
         </div>
         <p className="text-foreground font-medium">{agent.llm_provider} / {agent.llm_model}</p>
+      </GlowCard>
+
+      {/* Pending approvals */}
+      <GlowCard>
+        <PendingApprovals agentId={agentId} />
+        {/* Placeholder when empty */}
       </GlowCard>
 
       {/* Spending chart */}

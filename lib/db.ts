@@ -8,7 +8,8 @@ type AnyDB = any
 const memStore: {
   agents: Record<string, Record<string, unknown>>
   events: Array<Record<string, unknown>>
-} = { agents: {}, events: [] }
+  approvals: Record<string, Record<string, unknown>>
+} = { agents: {}, events: [], approvals: {} }
 
 let _db: AnyDB | null = null
 let _useMem = false
@@ -21,15 +22,16 @@ function getDb(): AnyDB {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const Database = require('better-sqlite3')
 
-    const DB_DIR = process.env.OPENCLAW_STATE_DIR
-      ? path.resolve(process.env.OPENCLAW_STATE_DIR.replace('~', process.env.HOME ?? ''))
-      : path.join(process.cwd(), '.data')
+    const DB_PATH = process.env.DATABASE_PATH
+      ? path.resolve(process.env.DATABASE_PATH)
+      : process.env.OPENCLAW_STATE_DIR
+        ? path.join(path.resolve(process.env.OPENCLAW_STATE_DIR.replace('~', process.env.HOME ?? '')), 'agents.db')
+        : path.join(process.cwd(), '.data', 'agents.db')
 
+    const DB_DIR = path.dirname(DB_PATH)
     if (!fs.existsSync(DB_DIR)) {
       fs.mkdirSync(DB_DIR, { recursive: true })
     }
-
-    const DB_PATH = path.join(DB_DIR, 'agents.db')
     _db = new Database(DB_PATH)
     _db.pragma('journal_mode = WAL')
     migrate(_db)
@@ -64,6 +66,23 @@ function migrate(db: AnyDB) {
       agent_id TEXT NOT NULL,
       event_type TEXT NOT NULL,
       payload TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (agent_id) REFERENCES agents(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS pending_approvals (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      action_type TEXT NOT NULL,
+      description TEXT NOT NULL,
+      amount REAL,
+      from_chain TEXT,
+      to_chain TEXT,
+      from_token TEXT,
+      to_token TEXT,
+      lifi_quote TEXT,
+      status TEXT DEFAULT 'pending',
+      tx_hash TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (agent_id) REFERENCES agents(id)
     );
@@ -203,4 +222,59 @@ export function getSpendingByDay(agentId: string, days = 7): { day: string; spen
   }
 
   return result
+}
+
+// ── Pending Approvals ────────────────────────────────────────────────────────
+
+export type PendingApproval = {
+  id: string
+  agent_id: string
+  action_type: 'payment' | 'rebalance' | 'bridge'
+  description: string
+  amount?: number
+  from_chain?: string
+  to_chain?: string
+  from_token?: string
+  to_token?: string
+  lifi_quote?: string
+  status: 'pending' | 'approved' | 'rejected'
+  tx_hash?: string
+  created_at: string
+}
+
+export function getApprovals(agentId: string, status?: string): PendingApproval[] {
+  const db = getDb()
+  if (!db) {
+    const all = Object.values(memStore.approvals) as PendingApproval[]
+    return all.filter((a) => a.agent_id === agentId && (!status || a.status === status))
+  }
+  if (status) {
+    return db.prepare('SELECT * FROM pending_approvals WHERE agent_id = ? AND status = ? ORDER BY created_at DESC').all(agentId, status) as PendingApproval[]
+  }
+  return db.prepare('SELECT * FROM pending_approvals WHERE agent_id = ? ORDER BY created_at DESC').all(agentId) as PendingApproval[]
+}
+
+export function createApproval(approval: Omit<PendingApproval, 'status' | 'created_at'>) {
+  const db = getDb()
+  if (!db) {
+    memStore.approvals[approval.id] = { ...approval, status: 'pending', created_at: new Date().toISOString() }
+    return
+  }
+  db.prepare(`
+    INSERT INTO pending_approvals (id, agent_id, action_type, description, amount, from_chain, to_chain, from_token, to_token, lifi_quote)
+    VALUES (@id, @agent_id, @action_type, @description, @amount, @from_chain, @to_chain, @from_token, @to_token, @lifi_quote)
+  `).run(approval)
+}
+
+export function updateApproval(id: string, fields: { status: 'approved' | 'rejected'; tx_hash?: string }) {
+  const db = getDb()
+  if (!db) {
+    if (memStore.approvals[id]) Object.assign(memStore.approvals[id], fields)
+    return
+  }
+  if (fields.tx_hash) {
+    db.prepare('UPDATE pending_approvals SET status = @status, tx_hash = @tx_hash WHERE id = @id').run({ ...fields, id })
+  } else {
+    db.prepare('UPDATE pending_approvals SET status = @status WHERE id = @id').run({ status: fields.status, id })
+  }
 }

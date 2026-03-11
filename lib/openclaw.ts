@@ -42,6 +42,12 @@ export async function startAgent(
     return { stdout: `Agent ${agentId} started (mock)`, stderr: '' }
   }
 
+  // If clawdbot.json doesn't exist, OpenClaw is not installed on this host — skip silently
+  if (!fs.existsSync(CLAWD_CONFIG)) {
+    console.warn('[openclaw] clawdbot.json not found — skipping OpenClaw registration')
+    return { stdout: `Agent ${agentId} saved (OpenClaw unavailable)`, stderr: '' }
+  }
+
   // 1. Create agent directory
   const agentDir = path.join(STATE_DIR, 'agents', agentId, 'agent')
   fs.mkdirSync(agentDir, { recursive: true })
@@ -119,7 +125,21 @@ export async function startAgent(
     writeClawdConfig(clawdConfig)
   }
 
+  // After writing config, restart the gateway so it picks up the new agent
+  await ensureGatewayRunning()
+
   return { stdout: `Agent ${agentId} registered in OpenClaw`, stderr: '' }
+}
+
+// Restart the OpenClaw gateway so it picks up new agent configs
+export async function ensureGatewayRunning(): Promise<void> {
+  if (MOCK_MODE || !fs.existsSync(CLAWD_CONFIG)) return
+  try {
+    const { stdout, stderr } = await execAsync(`${OPENCLAW_BIN} gateway restart`)
+    console.log('[openclaw] gateway restart:', stdout || stderr)
+  } catch (err) {
+    console.warn('[openclaw] gateway restart failed (continuing):', err)
+  }
 }
 
 export async function stopAgent(agentId: string) {
@@ -127,6 +147,8 @@ export async function stopAgent(agentId: string) {
     await new Promise((resolve) => setTimeout(resolve, 500))
     return
   }
+
+  if (!fs.existsSync(CLAWD_CONFIG)) return
 
   const clawdConfig = readClawdConfig()
 
