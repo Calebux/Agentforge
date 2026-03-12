@@ -30,6 +30,45 @@ const STATE_DIR = (process.env.OPENCLAW_STATE_DIR ?? '~/.clawdbot').replace(
 )
 const CLAWD_CONFIG = path.join(STATE_DIR, 'clawdbot.json')
 
+// ── SOUL.md watchdog ─────────────────────────────────────────────────────────
+// Watches agent workspace SOUL.md files and restarts the gateway when they change.
+
+const watchers = new Map() // filePath → fs.FSWatcher
+let reloadTimer = null
+
+function scheduleReload(filePath) {
+  clearTimeout(reloadTimer)
+  reloadTimer = setTimeout(() => {
+    console.log('[watchdog] SOUL.md changed:', filePath, '— restarting gateway')
+    restartGateway()
+  }, 1500) // debounce 1.5s in case of multiple rapid writes
+}
+
+function watchSoul(filePath) {
+  if (watchers.has(filePath) || !fs.existsSync(filePath)) return
+  const watcher = fs.watch(filePath, () => scheduleReload(filePath))
+  watchers.set(filePath, watcher)
+  console.log('[watchdog] watching', filePath)
+}
+
+function watchAgentWorkspaces() {
+  if (!fs.existsSync(CLAWD_CONFIG)) return
+  try {
+    const config = JSON.parse(fs.readFileSync(CLAWD_CONFIG, 'utf-8'))
+    const agents = config.agents?.list ?? []
+    for (const agent of agents) {
+      if (agent.workspace) {
+        watchSoul(path.join(agent.workspace, 'SOUL.md'))
+      }
+    }
+    // Also watch main/defaults workspace
+    const mainWs =
+      config.agents?.defaults?.workspace ??
+      agents.find((a) => a.id === 'main')?.workspace
+    if (mainWs) watchSoul(path.join(mainWs, 'SOUL.md'))
+  } catch {}
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function readJSON(file) {
@@ -182,6 +221,9 @@ async function handleRegister(req, res) {
     writeJSON(CLAWD_CONFIG, config)
     console.log(`[webhook] agent ${agentId} registered`)
 
+    // Start watching the new agent's SOUL.md for live reloads
+    watchSoul(path.join(workspaceDir, 'SOUL.md'))
+
     // 5. Restart gateway to pick up new agent
     restartGateway()
 
@@ -255,4 +297,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`[webhook] CLAWD_CONFIG: ${CLAWD_CONFIG}`)
   console.log(`[webhook] OPENCLAW_BIN: ${OPENCLAW_BIN}`)
   console.log(`[webhook] Auth: ${TOKEN ? 'token set' : 'NO TOKEN — open access!'}`)
+
+  // Start watching existing agent SOUL.md files on startup
+  watchAgentWorkspaces()
 })
