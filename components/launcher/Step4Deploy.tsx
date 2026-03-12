@@ -68,6 +68,7 @@ export function Step4Deploy({ template, config, limits, onBack }: Step4Props) {
           spending_limit_per_tx: limits.spending_limit_per_tx,
           allowed_actions: limits.allowed_actions,
           approval_threshold: limits.approval_threshold,
+          telegram_bot_token: limits.telegram_bot_token || undefined,
         }),
       })
 

@@ -22,6 +22,7 @@ export async function POST(request: NextRequest) {
     system_prompt,
     spending_limit_monthly,
     spending_limit_per_tx,
+    telegram_bot_token,
   } = body
 
   if (!owner_address || !template_id || !name || !llm_provider || !llm_model) {
@@ -42,6 +43,7 @@ export async function POST(request: NextRequest) {
       system_prompt,
       spending_limit_monthly: spending_limit_monthly ?? null,
       spending_limit_per_tx: spending_limit_per_tx ?? null,
+      telegram_bot_token: telegram_bot_token ?? null,
     })
 
     // 2. Register agent in OpenClaw (writes clawdbot.json + auth-profiles.json)
@@ -51,6 +53,7 @@ export async function POST(request: NextRequest) {
       llm_model,
       llm_api_key: llm_api_key ?? '',
       system_prompt,
+      telegram_bot_token: telegram_bot_token ?? undefined,
     })
     console.log('[deploy] startAgent result:', JSON.stringify(ocResult))
     console.log('[deploy] GATEWAY_URL env:', process.env.OPENCLAW_GATEWAY_URL)

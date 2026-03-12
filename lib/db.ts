@@ -56,6 +56,7 @@ function migrate(db: AnyDB) {
       spending_limit_monthly REAL,
       spending_limit_per_tx REAL,
       onchain_address TEXT,
+      telegram_bot_token TEXT,
       status TEXT DEFAULT 'pending',
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
@@ -117,6 +118,7 @@ export function createAgent(agent: {
   system_prompt: string
   spending_limit_monthly: number | null
   spending_limit_per_tx: number | null
+  telegram_bot_token?: string | null
 }) {
   const db = getDb()
   if (!db) {
@@ -130,9 +132,9 @@ export function createAgent(agent: {
     return
   }
   db.prepare(`
-    INSERT INTO agents (id, owner_address, name, template_id, llm_provider, llm_model, system_prompt, spending_limit_monthly, spending_limit_per_tx)
-    VALUES (@id, @owner_address, @name, @template_id, @llm_provider, @llm_model, @system_prompt, @spending_limit_monthly, @spending_limit_per_tx)
-  `).run(agent)
+    INSERT INTO agents (id, owner_address, name, template_id, llm_provider, llm_model, system_prompt, spending_limit_monthly, spending_limit_per_tx, telegram_bot_token)
+    VALUES (@id, @owner_address, @name, @template_id, @llm_provider, @llm_model, @system_prompt, @spending_limit_monthly, @spending_limit_per_tx, @telegram_bot_token)
+  `).run({ ...agent, telegram_bot_token: agent.telegram_bot_token ?? null })
 }
 
 export function updateAgent(id: string, fields: Partial<{

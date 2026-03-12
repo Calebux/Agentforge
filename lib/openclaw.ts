@@ -67,6 +67,7 @@ export async function startAgent(
     llm_model: string
     llm_api_key: string
     system_prompt?: string
+    telegram_bot_token?: string
   }
 ) {
   if (MOCK_MODE) {

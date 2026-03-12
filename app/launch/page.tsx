@@ -45,6 +45,7 @@ function LaunchContent() {
       read_messages: true,
       post_messages: true,
     },
+    telegram_bot_token: '',
   })
 
   // Handle ?playbook= URL param

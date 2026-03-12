@@ -96,7 +96,7 @@ async function handleRegister(req, res) {
     return send(res, 400, { error: 'Invalid JSON body' })
   }
 
-  const { agentId, name, llm_provider, llm_model, llm_api_key, system_prompt } = body
+  const { agentId, name, llm_provider, llm_model, llm_api_key, system_prompt, telegram_bot_token } = body
   if (!agentId || !llm_provider || !llm_model || !llm_api_key) {
     return send(res, 400, { error: 'Missing required fields: agentId, llm_provider, llm_model, llm_api_key' })
   }
@@ -169,6 +169,15 @@ async function handleRegister(req, res) {
     if (tgIdx >= 0) bindings[tgIdx] = tgBinding
     else bindings.push(tgBinding)
     config.bindings = bindings
+
+    // 5. Update Telegram bot token if provided
+    if (telegram_bot_token) {
+      config.channels = config.channels ?? {}
+      config.channels.telegram = config.channels.telegram ?? {}
+      config.channels.telegram.botToken = telegram_bot_token
+      config.channels.telegram.enabled = true
+      console.log('[webhook] updated Telegram bot token')
+    }
 
     writeJSON(CLAWD_CONFIG, config)
     console.log(`[webhook] agent ${agentId} registered`)

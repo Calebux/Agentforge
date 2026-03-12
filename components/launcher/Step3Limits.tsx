@@ -13,6 +13,7 @@ export interface Step3Config {
     read_messages: boolean
     post_messages: boolean
   }
+  telegram_bot_token: string
 }
 
 interface Step3Props {
@@ -106,6 +107,18 @@ export function Step3Limits({ config, onChange, onNext, onBack }: Step3Props) {
             ))}
           </div>
         </div>
+      </div>
+
+      <div className="border border-foreground/10 bg-secondary/30 p-4 space-y-2">
+        <p className="text-sm font-medium text-foreground">Telegram Bot (optional)</p>
+        <p className="text-xs text-muted-foreground">
+          Create a bot via <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="underline">@BotFather</a> and paste the token here to give your agent its own dedicated Telegram bot.
+        </p>
+        <Input
+          placeholder="123456789:ABCdef..."
+          value={config.telegram_bot_token}
+          onChange={(e) => onChange({ ...config, telegram_bot_token: e.target.value })}
+        />
       </div>
 
       <div className="flex justify-between pt-2">

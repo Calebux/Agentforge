@@ -43,6 +43,7 @@ export type DeployAgentRequest = {
     post_messages: boolean
   }
   approval_threshold: number
+  telegram_bot_token?: string
 }
 
 export type DeployAgentResponse = {
